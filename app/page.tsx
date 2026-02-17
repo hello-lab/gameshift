@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 
 export default function Home() {
   return (
@@ -91,9 +92,9 @@ export default function Home() {
 
         {/* Buttons */}
         <div className="w-full max-w-sm flex flex-col gap-4 mb-24">
-          <button className="w-full py-4 bg-retro-blue text-white text-sm uppercase tracking-widest pixel-btn hover:bg-retro-blue/90 transition-all border-2 border-white/20">
+          <Link href="/login" className="w-full py-4 bg-retro-blue text-white text-sm uppercase tracking-widest pixel-btn hover:bg-retro-blue/90 transition-all border-2 border-white/20 text-center">
             Start Game
-          </button>
+          </Link>
           <button className="w-full py-4 bg-verse-purple/60 backdrop-blur-md text-white text-sm uppercase tracking-widest pixel-btn hover:bg-verse-purple/80 transition-all border-2 border-white/20">
             High Scores
           </button>
