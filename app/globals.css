@@ -1,26 +1,78 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@theme {
+  --color-verse-dark: #1a0b2e;
+  --color-verse-purple: #4a1c6e;
+  --color-verse-light: #9d4edd;
+  --color-retro-gold: #ffd700;
+  --color-retro-blue: #4361ee;
+  --color-pixel-cloud: #e0aaff;
+  --color-accent-pink: #ff00ff;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --font-pixel: var(--font-pixel), "Press Start 2P", cursive;
+  --font-retro: var(--font-retro), "VT323", monospace;
+  --font-display: var(--font-display), "Space Grotesk", sans-serif;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  --background-image-pixel-sky: linear-gradient(to bottom, #1a0b2e 0%, #4a1c6e 100%);
+  
+  --animate-twinkle: twinkle 3s infinite;
+  --animate-float: float 4s ease-in-out infinite;
+  --animate-float-delayed: float 4s ease-in-out 2s infinite;
+
+  @keyframes twinkle {
+    0%, 100% { opacity: 0.2; }
+    50% { opacity: 1; }
+  }
+  @keyframes float {
+    0% { transform: translateY(0px); }
+    50% { transform: translateY(-15px); }
+    100% { transform: translateY(0px); }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  .pixel-border {
+    box-shadow: 
+        -4px 0 0 0 #fff,
+        4px 0 0 0 #fff,
+        0 -4px 0 0 #fff,
+        0 4px 0 0 #fff;
+    margin: 4px;
+  }
+  .pixel-border-purple {
+    box-shadow: 
+        -4px 0 0 0 #4a1c6e,
+        4px 0 0 0 #4a1c6e,
+        0 -4px 0 0 #4a1c6e,
+        0 4px 0 0 #4a1c6e;
+    margin: 4px;
+  }
+  .pixel-btn {
+    box-shadow: inset -4px -4px 0px 0px rgba(0,0,0,0.5);
+  }
+  .pixel-btn:active {
+    box-shadow: inset 4px 4px 0px 0px rgba(0,0,0,0.5);
+    transform: translateY(2px);
+  }
+  .pixel-text-shadow {
+    text-shadow: 4px 4px 0px #4a1c6e;
+  }
+  .text-shadow-sm {
+    text-shadow: 1px 1px 0px #000;
+  }
+  
+  .star {
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    background: white;
+  }
+}
+
+/* Custom classes that use the theme values but need compabitility */
+.bg-retro-blue {
+    background-color: var(--color-retro-blue);
+}
+.text-retro-gold {
+    color: var(--color-retro-gold);
 }
