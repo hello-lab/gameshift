@@ -1,6 +1,49 @@
+"use client";
+
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 export default function Login() {
+    const router = useRouter();
+    const [identifier, setIdentifier] = useState("");
+    const [password, setPassword] = useState("");
+    const [showPassword, setShowPassword] = useState(false);
+    const [error, setError] = useState("");
+    const [isLoading, setIsLoading] = useState(false);
+
+    const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        setError("");
+        setIsLoading(true);
+
+        try {
+            const response = await fetch("/api/login", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    identifier,
+                    password,
+                }),
+            });
+
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                setError(data.error || "Login failed");
+                return;
+            }
+
+            router.push("/battleship");
+        } catch {
+            setError("Network error. Please try again.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     return (
         <div className="relative flex min-h-screen w-full flex-col items-center justify-center overflow-hidden px-6 pixel-bg text-white selection:bg-purple-500/30 font-display">
             {/* Background Elements */}
@@ -43,7 +86,7 @@ export default function Login() {
                     <p className="text-purple-200/80 text-sm font-medium tracking-wide">PLAYER LOGIN INITIALIZED</p>
                 </div>
 
-                <div className="space-y-6">
+                <form className="space-y-6" onSubmit={handleSubmit}>
                     <div className="space-y-2">
                         <label className="text-xs font-bold uppercase tracking-widest text-purple-300 ml-1 font-display">Player ID / Team</label>
                         <div className="relative group">
@@ -51,6 +94,9 @@ export default function Login() {
                                 className="pixel-input w-full h-14 px-5 text-white placeholder:text-purple-300/30 transition-all duration-200 font-medium tracking-wider"
                                 placeholder="INSERT COIN OR ID"
                                 type="text"
+                                value={identifier}
+                                onChange={(event) => setIdentifier(event.target.value)}
+                                required
                             />
                             <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-purple-400 group-focus-within:text-purple-200 transition-colors">
                                 videogame_asset
@@ -64,21 +110,37 @@ export default function Login() {
                             <input
                                 className="pixel-input w-full h-14 px-5 text-white placeholder:text-purple-300/30 transition-all duration-200 font-medium tracking-wider"
                                 placeholder="••••••••"
-                                type="password"
+                                type={showPassword ? "text" : "password"}
+                                value={password}
+                                onChange={(event) => setPassword(event.target.value)}
+                                required
                             />
-                            <button className="absolute right-4 top-1/2 -translate-y-1/2 text-purple-400 hover:text-purple-200 transition-colors">
+                            <button
+                                className="absolute right-4 top-1/2 -translate-y-1/2 text-purple-400 hover:text-purple-200 transition-colors"
+                                type="button"
+                                onClick={() => setShowPassword((prev) => !prev)}
+                                aria-label={showPassword ? "Hide password" : "Show password"}
+                            >
                                 <span className="material-symbols-outlined text-xl">visibility</span>
                             </button>
                         </div>
                     </div>
 
+                    {error ? (
+                        <p className="text-sm text-pink-200 bg-pink-500/10 border border-pink-400/30 px-4 py-2">
+                            {error}
+                        </p>
+                    ) : null}
+
                     <div className="pt-6">
-                        <Link href="/battleship" className="w-full">
-                            <button className="arena-btn w-full h-14 flex items-center justify-center gap-3 text-white font-pixel text-sm tracking-wide group relative overflow-hidden">
-                                <span className="relative z-10">ENTER THE ARENA</span>
-                                <span className="material-symbols-outlined relative z-10 animate-pulse">bolt</span>
-                            </button>
-                        </Link>
+                        <button
+                            className="arena-btn w-full h-14 flex items-center justify-center gap-3 text-white font-pixel text-sm tracking-wide group relative overflow-hidden disabled:opacity-60"
+                            type="submit"
+                            disabled={isLoading}
+                        >
+                            <span className="relative z-10">{isLoading ? "LOADING..." : "ENTER THE ARENA"}</span>
+                            <span className="material-symbols-outlined relative z-10 animate-pulse">bolt</span>
+                        </button>
                     </div>
 
                     <div className="flex flex-col items-center gap-6 pt-4">
@@ -93,13 +155,18 @@ export default function Login() {
                             <span className="text-xs font-bold uppercase tracking-wider font-display">Scan Quest QR</span>
                         </button>
                     </div>
-                </div>
+                </form>
             </div>
 
             <div className="mt-8 text-center relative z-10">
-                <a className="text-xs font-bold text-purple-400 hover:text-purple-200 transition-colors uppercase tracking-wide font-pixel text-[10px]" href="#">
-                    &lt; HELP & OPTIONS /&gt;
-                </a>
+                <div className="flex flex-col items-center gap-3">
+                    <Link className="text-xs font-bold text-purple-400 hover:text-purple-200 transition-colors uppercase tracking-wide font-pixel text-[10px]" href="/signup">
+                        &lt; CREATE PLAYER PROFILE /&gt;
+                    </Link>
+                    <a className="text-xs font-bold text-purple-400 hover:text-purple-200 transition-colors uppercase tracking-wide font-pixel text-[10px]" href="#">
+                        &lt; HELP & OPTIONS /&gt;
+                    </a>
+                </div>
             </div>
 
             <div className="h-8"></div>
