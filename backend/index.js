@@ -545,7 +545,8 @@ nextApp.prepare().then(() => {
     },
   });
 
-  app.use(express.json());
+  // Only use express.json() for admin routes
+  app.use("/api/admin", express.json());
 
   app.get("/api/admin/rooms", (req, res) => {
     if (!requireAdmin(req, res)) {

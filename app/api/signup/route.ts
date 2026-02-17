@@ -56,6 +56,7 @@ export async function POST(request: Request) {
       username,
       usernameLower,
       passwordHash,
+      score: 0,
       createdAt: new Date(),
     });
   } catch (error) {

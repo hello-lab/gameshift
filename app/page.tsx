@@ -29,6 +29,9 @@ export default function Home() {
             <span className="w-2 h-2 bg-red-500 animate-pulse"></span>
             <span className="text-[8px] md:text-[10px] uppercase text-retro-gold tracking-widest font-retro text-lg">LIVE EVENT</span>
           </div>
+          <Link href="/profile" className="material-symbols-outlined text-white hover:text-retro-gold transition-colors" title="Profile">
+            account_circle
+          </Link>
           <button className="material-symbols-outlined text-white hover:text-retro-gold transition-colors">menu</button>
         </div>
       </header>
