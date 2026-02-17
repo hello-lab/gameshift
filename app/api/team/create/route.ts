@@ -41,7 +41,8 @@ export async function POST(request: NextRequest) {
   let body: CreateTeamBody;
 
   try {
-    body = await request.json();
+    const clonedRequest = request.clone();
+    body = await clonedRequest.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }

@@ -53,7 +53,7 @@ export default function RootLayout({
             </div>
             <p className="text-[10px] font-pixel mt-1">WORDLE</p>
           </a>
-          <a className="flex flex-1 flex-col items-center justify-center gap-1 text-verse-light/50 group hover:text-white transition-colors" href="/team/register">
+          <a className="flex flex-1 flex-col items-center justify-center gap-1 text-verse-light/50 group hover:text-white transition-colors" href="/team">
             <div className="w-10 h-8 flex items-center justify-center bg-white/5 rounded border-2 border-transparent group-hover:border-white transition-all">
               <span className="material-symbols-outlined text-2xl">groups</span>
             </div>

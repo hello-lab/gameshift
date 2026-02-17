@@ -51,8 +51,13 @@ export async function POST(request: Request) {
 
   const response = NextResponse.json({ ok: true });
   response.cookies.set({
-    ...sessionCookieOptions,
+    name: sessionCookieOptions.name,
     value: token,
+    httpOnly: sessionCookieOptions.httpOnly,
+    sameSite: sessionCookieOptions.sameSite,
+    secure: sessionCookieOptions.secure,
+    path: sessionCookieOptions.path,
+    maxAge: sessionCookieOptions.maxAge,
   });
 
   return response;
