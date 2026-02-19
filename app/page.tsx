@@ -73,26 +73,7 @@ export default function Home() {
           Enter the pixel realm. Collect artifacts, unlock levels, and claim the ultimate treasure.
         </p>
 
-        {/* Stats */}
-        <div className="w-full max-w-sm bg-black/40 border-2 border-white/20 p-4 mb-10 backdrop-blur-sm">
-          <div className="flex justify-between items-center text-center">
-            <div>
-              <div className="text-[8px] text-retro-gold mb-1 font-sans uppercase tracking-widest">LOOT POOL</div>
-              <div className="text-lg text-retro-gold font-retro tracking-widest">$120K</div>
-            </div>
-            <div className="w-0.5 h-8 bg-white/10"></div>
-            <div>
-              <div className="text-[8px] text-retro-blue mb-1 font-sans uppercase tracking-widest">PLAYERS</div>
-              <div className="text-lg text-white font-retro tracking-widest">14.2K</div>
-            </div>
-            <div className="w-0.5 h-8 bg-white/10"></div>
-            <div>
-              <div className="text-[8px] text-accent-pink mb-1 font-sans uppercase tracking-widest">TIME LEFT</div>
-              <div className="text-lg text-accent-pink font-retro tracking-widest">04:22</div>
-            </div>
-          </div>
-        </div>
-
+       
         {/* Buttons */}
         <div className="w-full max-w-sm flex flex-col gap-4">
           <Link href="/login" className="w-full py-4 bg-retro-blue text-white text-sm uppercase tracking-widest pixel-btn hover:bg-retro-blue/90 transition-all border-2 border-white/20 text-center">

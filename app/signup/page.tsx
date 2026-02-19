@@ -56,7 +56,7 @@ export default function Signup() {
                     <div className="size-10 bg-purple-900 border-2 border-purple-500 flex items-center justify-center shadow-pixel-sm">
                         <span className="material-symbols-outlined text-purple-300 text-xl">sports_esports</span>
                     </div>
-                    <span className="text-sm font-pixel text-purple-200 tracking-widest uppercase" style={{ textShadow: "2px 2px 0 #000" }}>Game Verse</span>
+                    <span className="text-sm font-pixel text-purple-200 tracking-widest uppercase" style={{ textShadow: "2px 2px 0 #000" }}>Game Shift</span>
                 </div>
                 <Link href="/" className="text-white/60 hover:text-white transition-colors">
                     <span className="material-symbols-outlined">close</span>

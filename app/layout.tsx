@@ -20,7 +20,7 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "Game Verse Landing Page",
+  title: "Game Shift Landing Page",
   description: "Enter the pixel realm",
 };
 

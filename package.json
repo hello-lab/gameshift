@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node backend/index.js",
+    "dev": "next dev",
     "build": "next build",
-    "start": "node backend/index.js",
+    "start": "next start",
+    "backend": "node backend/index.js",
     "lint": "eslint"
   },
   "dependencies": {

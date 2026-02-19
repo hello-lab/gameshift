@@ -37,10 +37,14 @@ export async function POST(
   const { roomId } = await params;
 
   try {
-    const response = await fetch(`http://localhost:3000/api/admin/rooms/${roomId}/start`, {
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get("gs_session")?.value;
+    
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+    const response = await fetch(`${backendUrl}/api/admin/rooms/${roomId}/start`, {
       method: "POST",
       headers: {
-        "x-admin-user": admin._id.toString(),
+        "Cookie": `gs_session=${sessionCookie}`,
       },
     });
 

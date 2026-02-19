@@ -66,7 +66,7 @@ export default function Login() {
                     <div className="size-10 bg-purple-900 border-2 border-purple-500 flex items-center justify-center shadow-pixel-sm">
                         <span className="material-symbols-outlined text-purple-300 text-xl">sports_esports</span>
                     </div>
-                    <span className="text-sm font-pixel text-purple-200 tracking-widest uppercase" style={{ textShadow: "2px 2px 0 #000" }}>Game Verse</span>
+                    <span className="text-sm font-pixel text-purple-200 tracking-widest uppercase" style={{ textShadow: "2px 2px 0 #000" }}>Game Shift</span>
                 </div>
                 <Link href="/" className="text-white/60 hover:text-white transition-colors">
                     <span className="material-symbols-outlined">close</span>
@@ -82,7 +82,7 @@ export default function Login() {
                 <div className="absolute -bottom-1 -right-1 w-2 h-2 bg-purple-300"></div>
 
                 <div className="text-center mb-10">
-                    <h1 className="text-2xl md:text-3xl font-pixel text-white mb-4 leading-relaxed tracking-wider" style={{ textShadow: "4px 4px 0 #4c1d95" }}>GAME VERSE</h1>
+                    <h1 className="text-2xl md:text-3xl font-pixel text-white mb-4 leading-relaxed tracking-wider" style={{ textShadow: "4px 4px 0 #4c1d95" }}>GAME SHIFT</h1>
                     <p className="text-purple-200/80 text-sm font-medium tracking-wide">PLAYER LOGIN INITIALIZED</p>
                 </div>
 
