@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
   );
 
   if (updateUserResult.modifiedCount === 0) {
-    await teams.updateOne({ _id: teamId }, { $pull: { memberIds: userId } });
+    await teams.updateOne({ _id: teamId }, { $pull: { memberIds: userId } as any });
     return NextResponse.json({ error: "Could not join team" }, { status: 409 });
   }
 
