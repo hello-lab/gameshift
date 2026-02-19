@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
 
   const leaderId = team.leaderId instanceof ObjectId ? team.leaderId : new ObjectId(team.leaderId);
   const memberIds = Array.isArray(team.memberIds) ? team.memberIds : [];
-  const normalizedMemberIds = memberIds.map((memberId) =>
+  const normalizedMemberIds = memberIds.map((memberId: any) =>
     memberId instanceof ObjectId ? memberId : new ObjectId(memberId)
   );
 
@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
     members.map((member) => [member._id.toString(), { username: member.username, score: member.score || 0 }])
   );
   const memberPayload: TeamMember[] = normalizedMemberIds
-    .map((memberId) => {
+    .map((memberId: any) => {
       const member = memberMap.get(memberId.toString());
       if (!member) {
         return null;

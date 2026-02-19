@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Leader cannot be kicked" }, { status: 400 });
   }
 
-  await teams.updateOne({ _id: teamId }, { $pull: { memberIds: targetId } });
+  await teams.updateOne({ _id: teamId }, { $pull: { memberIds: targetId } } as any);
   await users.updateOne({ _id: targetId, teamId }, { $unset: { teamId: "", teamRole: "" } });
 
   return NextResponse.json({ ok: true });

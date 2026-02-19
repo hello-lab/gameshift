@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Leader must disband the team" }, { status: 400 });
   }
 
-  await teams.updateOne({ _id: teamId }, { $pull: { memberIds: userId } });
+  await teams.updateOne({ _id: teamId }, { $pull: { memberIds: userId } } as any);
   await users.updateOne({ _id: userId }, { $unset: { teamId: "", teamRole: "" } });
 
   return NextResponse.json({ ok: true });

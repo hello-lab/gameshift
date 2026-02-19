@@ -22,7 +22,7 @@ export async function GET() {
     // For each team, calculate aggregate score from all members
     const teamsWithScores = await Promise.all(
       teamDocs.map(async (team) => {
-        const memberIds = (team.memberIds || []).map((id) =>
+        const memberIds = (team.memberIds || []).map((id: any) =>
           id instanceof ObjectId ? id : new ObjectId(id)
         );
 
