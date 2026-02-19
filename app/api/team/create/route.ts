@@ -89,6 +89,7 @@ export async function POST(request: NextRequest) {
     leaderId: userId,
     memberIds: [userId],
     maxMembers: MAX_MEMBERS,
+    score: 0,
     createdAt: new Date(),
   });
 

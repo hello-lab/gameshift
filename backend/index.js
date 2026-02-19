@@ -3,10 +3,15 @@ const http = require("http");
 const next = require("next");
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
+const { MongoClient, ObjectId } = require("mongodb");
 
 const dev = process.env.NODE_ENV !== "production";
 const nextApp = next({ dev });
 const handle = nextApp.getRequestHandler();
+
+let cachedGlitchPhase = 1;
+let lastGlitchFetch = 0;
+let mongoDb = null;
 
 const TURN_DURATION_MS = 3 * 60 * 1000;
 const MAX_TEAMS = 5;
@@ -16,8 +21,45 @@ const REQUIRED_FLEET_CELLS = 17;
 const AI_THINK_MS = 800;
 const AI_PREFIX = "AI-";
 const TOTAL_TURNS = 15;
+const SHIP_SIZES = [5, 4, 3, 3, 2]; // Carrier, Battleship, Cruiser, Submarine, Destroyer
+const SHIP_NAMES = ["Carrier", "Battleship", "Cruiser", "Submarine", "Destroyer"];
+const AI_ENEMY_ID = "AI_ENEMY";
 
-function getCurrentGlitchPhase(turnCount) {
+// Get MongoDB database instance
+async function getDb() {
+  if (!mongoDb) {
+    const dbUrl = process.env.MONGODB_URI || "mongodb://localhost:27017";
+    const client = new MongoClient(dbUrl);
+    await client.connect();
+    mongoDb = client.db("gameshift");
+  }
+  return mongoDb;
+}
+
+// Get admin-controlled glitch phase (with caching)
+async function getAdminGlitchPhase() {
+  const now = Date.now();
+  // Cache for 5 seconds to avoid too many DB calls
+  if (now - lastGlitchFetch < 5000) {
+    return cachedGlitchPhase;
+  }
+
+  try {
+    const db = await getDb();
+    const settings = db.collection("settings");
+    const glitchSetting = await settings.findOne({ key: "currentGlitchPhase" });
+    const phase = glitchSetting?.phase || 1;
+    cachedGlitchPhase = phase;
+    lastGlitchFetch = now;
+    return phase;
+  } catch (error) {
+    console.error("Error fetching glitch phase from DB:", error);
+    return cachedGlitchPhase; // Return cached value on error
+  }
+}
+
+// Fallback: default glitch by turn count (used if admin control unavailable)
+function getDefaultGlitchPhase(turnCount) {
   if (turnCount <= 3) {
     return 1;
   }
@@ -41,24 +83,203 @@ function createGrid(value) {
   );
 }
 
+// Track per-member attacks in current round
+function hasMemberAttackedThisRound(room, teamId, userId) {
+  if (!room.memberAttacksThisRound) {
+    room.memberAttacksThisRound = new Set();
+  }
+  return room.memberAttacksThisRound.has(`${teamId}:${userId}`);
+}
+
+function markMemberAttacked(room, teamId, userId) {
+  if (!room.memberAttacksThisRound) {
+    room.memberAttacksThisRound = new Set();
+  }
+  room.memberAttacksThisRound.add(`${teamId}:${userId}`);
+}
+
+function resetRoundAttacks(room) {
+  room.memberAttacksThisRound = new Set();
+}
+
+function allMembersAttackedThisRound(room) {
+  const currentTeam = room.teams[room.turnIndex];
+  if (!currentTeam) {
+    return false;
+  }
+  
+  // Bots always count as attacked (single entity)
+  if (isBot(currentTeam)) {
+    return true;
+  }
+  
+  // For human teams, check if all connected members have attacked
+  const connectedMembers = [];
+  (currentTeam.members || []).forEach((memberId) => {
+    const socketId = currentTeam.memberSockets?.get(memberId);
+    if (socketId) {
+      connectedMembers.push(memberId);
+    }
+  });
+  
+  if (connectedMembers.length === 0) {
+    return false;
+  }
+  
+  return connectedMembers.every((userId) => hasMemberAttackedThisRound(room, currentTeam.teamId, userId));
+}
+
 function generateHazardGrid() {
   return Array.from({ length: GRID_SIZE }, () =>
     Array.from({ length: GRID_SIZE }, () => Math.random() < 0.2)
   );
 }
 
-function createRandomFleetGrid() {
-  const grid = createGrid(false);
-  let placed = 0;
-  while (placed < REQUIRED_FLEET_CELLS) {
-    const x = Math.floor(Math.random() * GRID_SIZE);
-    const y = Math.floor(Math.random() * GRID_SIZE);
-    if (!grid[y][x]) {
-      grid[y][x] = true;
-      placed += 1;
+function canPlaceShip(grid, x, y, size, isHorizontal) {
+  if (isHorizontal) {
+    if (x + size > GRID_SIZE) return false;
+    for (let i = 0; i < size; i++) {
+      if (grid[y][x + i]) return false;
+    }
+  } else {
+    if (y + size > GRID_SIZE) return false;
+    for (let i = 0; i < size; i++) {
+      if (grid[y + i][x]) return false;
     }
   }
-  return grid;
+  return true;
+}
+
+function placeShip(grid, x, y, size, isHorizontal, shipId) {
+  const cells = [];
+  if (isHorizontal) {
+    for (let i = 0; i < size; i++) {
+      grid[y][x + i] = shipId;
+      cells.push({ x: x + i, y });
+    }
+  } else {
+    for (let i = 0; i < size; i++) {
+      grid[y + i][x] = shipId;
+      cells.push({ x, y: y + i });
+    }
+  }
+  return cells;
+}
+
+function createRandomFleetGrid() {
+  const grid = createGrid(false);
+  const ships = [];
+  
+  for (let i = 0; i < SHIP_SIZES.length; i++) {
+    const size = SHIP_SIZES[i];
+    const shipId = `ship_${i}`;
+    let placed = false;
+    let attempts = 0;
+    
+    while (!placed && attempts < 100) {
+      const x = Math.floor(Math.random() * GRID_SIZE);
+      const y = Math.floor(Math.random() * GRID_SIZE);
+      const isHorizontal = Math.random() < 0.5;
+      
+      if (canPlaceShip(grid, x, y, size, isHorizontal)) {
+        const cells = placeShip(grid, x, y, size, isHorizontal, shipId);
+        ships.push({
+          id: shipId,
+          name: SHIP_NAMES[i],
+          size,
+          cells,
+          hits: 0,
+          sunk: false,
+        });
+        placed = true;
+      }
+      attempts++;
+    }
+    
+    if (!placed) {
+      // Fallback: place randomly if structured placement fails
+      console.warn(`Failed to place ship ${shipId} properly, using fallback`);
+      return createRandomFleetGrid(); // Retry
+    }
+  }
+  
+  return { grid, ships };
+}
+
+function createAIEnemy() {
+  const fleetData = createRandomFleetGrid();
+  return {
+    teamId: AI_ENEMY_ID,
+    teamName: "🤖 AI Enemy",
+    hp: REQUIRED_FLEET_CELLS,
+    fleetGrid: fleetData.grid,
+    ships: fleetData.ships,
+    isAlive: true,
+    score: 0,
+    attackGrids: {},
+    isAI: true,
+  };
+}
+
+function detectShipsFromGrid(fleetGrid) {
+  // Create a working copy
+  const visited = createGrid(false);
+  const ships = [];
+  let shipIdCounter = 0;
+
+  function findShip(startX, startY) {
+    const cells = [];
+    
+    // Try horizontal
+    let x = startX;
+    while (x < GRID_SIZE && fleetGrid[startY][x] && !visited[startY][x]) {
+      cells.push({ x, y: startY });
+      visited[startY][x] = true;
+      x++;
+    }
+    
+    if (cells.length > 1) {
+      return cells; // Found horizontal ship
+    }
+    
+    // Try vertical
+    if (cells.length === 1) {
+      visited[startY][startX] = false; // Reset
+      cells.length = 0;
+    }
+    
+    let y = startY;
+    while (y < GRID_SIZE && fleetGrid[y][startX] && !visited[y][startX]) {
+      cells.push({ x: startX, y });
+      visited[y][startX] = true;
+      y++;
+    }
+    
+    return cells;
+  }
+
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      if (fleetGrid[y][x] && !visited[y][x]) {
+        const cells = findShip(x, y);
+        if (cells.length > 0) {
+          const shipId = `ship_${shipIdCounter++}`;
+          const size = cells.length;
+          const shipName = SHIP_NAMES[SHIP_SIZES.indexOf(size)] || `Ship-${size}`;
+          ships.push({
+            id: shipId,
+            name: shipName,
+            size,
+            cells,
+            hits: 0,
+            sunk: false,
+          });
+        }
+      }
+    }
+  }
+
+  return ships;
 }
 
 function isBot(team) {
@@ -67,26 +288,36 @@ function isBot(team) {
 
 function sanitizeRoom(room) {
   const turnTeamId = room.teams[room.turnIndex]?.teamId || null;
+  const turnTeamName = room.teams[room.turnIndex]?.teamName || null;
   return {
     roomId: room.roomId,
     turnCount: room.turnCount,
     glitchPhase: room.glitchPhase,
     status: room.status,
     turnTeamId,
+    turnTeamName,
     phaseEndsAt: room.phaseEndsAt,
     teams: room.teams.map((team) => ({
       teamId: team.teamId,
+      teamName: team.teamName,
       hp: team.hp,
       isAlive: team.isAlive,
       score: team.score,
-      isConnected: team.isConnected,
+      isConnected: team.memberSockets && team.memberSockets.size > 0,
     })),
+    aiEnemy: room.aiEnemy ? {
+      hp: room.aiEnemy.hp,
+      isAlive: room.aiEnemy.isAlive,
+      totalShips: room.aiEnemy.ships?.length || 5,
+      sunkShips: room.aiEnemy.ships?.filter(s => s.sunk).length || 0,
+    } : null,
   };
 }
 
 function listRoomsSummary() {
   return Array.from(rooms.values()).map((room) => {
     const turnTeamId = room.teams[room.turnIndex]?.teamId || null;
+    const turnTeamName = room.teams[room.turnIndex]?.teamName || null;
     return {
       roomId: room.roomId,
       turnCount: room.turnCount,
@@ -94,15 +325,71 @@ function listRoomsSummary() {
       status: room.status,
       phaseEndsAt: room.phaseEndsAt,
       turnTeamId,
+      turnTeamName,
       teams: room.teams.map((team) => ({
         teamId: team.teamId,
+        teamName: team.teamName,
         hp: team.hp,
         isAlive: team.isAlive,
         score: team.score,
-        isConnected: team.isConnected,
+        isConnected: team.memberSockets && team.memberSockets.size > 0,
       })),
+      aiEnemy: room.aiEnemy ? {
+        hp: room.aiEnemy.hp,
+        isAlive: room.aiEnemy.isAlive,
+      } : null,
     };
   });
+}
+
+async function persistScoreDelta(attacker, scoreDelta) {
+  const effectiveUserId = attacker?.lastUserId || attacker?.userId;
+  console.log(`[SCORE] persistScoreDelta called: userId=${effectiveUserId}, delta=${scoreDelta}, isBot=${isBot(attacker)}`);
+  
+  if (!effectiveUserId || isBot(attacker)) {
+    console.log(`[SCORE] Skipping: invalid userId or is bot`);
+    return;
+  }
+
+  if (!Number.isFinite(scoreDelta) || scoreDelta === 0) {
+    console.log(`[SCORE] Skipping: Invalid or zero delta`);
+    return;
+  }
+
+  const points = Math.trunc(scoreDelta);
+  if (points === 0) {
+    console.log(`[SCORE] Skipping: Points truncated to 0`);
+    return;
+  }
+
+  console.log(`[SCORE] Sending request to update score: userId=${effectiveUserId}, points=${points}`);
+  
+  try {
+    const response = await fetch("http://localhost:3000/api/users/score", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: effectiveUserId,
+        scorePoints: points,
+      }),
+    });
+
+    console.log(`[SCORE] Response status: ${response.status}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(
+        `[SCORE] Failed to update score for ${attacker.teamName || attacker.teamId}:`,
+        response.status,
+        errorText
+      );
+    } else {
+      const responseData = await response.json();
+      console.log(`[SCORE] Success: ${JSON.stringify(responseData)}`);
+    }
+  } catch (error) {
+    console.error(`[SCORE] Error updating score for ${attacker.teamName || attacker.teamId}:`, error.message, error.code);
+  }
 }
 
 function getNextTurnIndex(room, startIndex) {
@@ -113,7 +400,9 @@ function getNextTurnIndex(room, startIndex) {
   for (let offset = 0; offset < room.teams.length; offset += 1) {
     const index = (startIndex + offset) % room.teams.length;
     const team = room.teams[index];
-    if (team.isAlive && team.isConnected) {
+    // Check if team is alive and has connected members (or is a bot)
+    const hasConnectedMembers = isBot(team) || (team.memberSockets && team.memberSockets.size > 0);
+    if (team.isAlive && hasConnectedMembers) {
       return index;
     }
   }
@@ -126,6 +415,17 @@ function resolveAttack(room, attacker, target, x, y) {
   let damageToAttacker = 0;
   let damageToTarget = 0;
   let result = isHit ? "hit" : "miss";
+  let hitShip = null;
+
+  // Find which ship was hit (if any)
+  if (isHit && target.ships) {
+    for (const ship of target.ships) {
+      if (!ship.sunk && ship.cells.some(cell => cell.x === x && cell.y === y)) {
+        hitShip = ship;
+        break;
+      }
+    }
+  }
 
   switch (room.glitchPhase) {
     case 1:
@@ -168,6 +468,7 @@ function resolveAttack(room, attacker, target, x, y) {
     damageToAttacker,
     damageToTarget,
     result,
+    hitShip,
   };
 }
 
@@ -197,6 +498,7 @@ function endGame(io, room, reason) {
     .map((team, index) => ({
       rank: index + 1,
       teamId: team.teamId,
+      teamName: team.teamName || team.teamId,
       hp: team.hp,
       score: team.score,
       isAlive: team.isAlive,
@@ -205,75 +507,47 @@ function endGame(io, room, reason) {
 
   io.to(room.roomId).emit("gameOver", { reason, rankings });
   io.to(room.roomId).emit("roomUpdate", sanitizeRoom(room));
-
-  // Award points to non-bot players based on rank
-  rankings.forEach(async (ranking) => {
-    const team = room.teams.find((t) => t.teamId === ranking.teamId);
-    if (!team || !team.userId || isBot(team)) {
-      return; // Skip bots or teams without userId
-    }
-
-    let pointsAwarded = 0;
-    if (ranking.rank === 1) {
-      pointsAwarded = 100; // 1st place
-    } else if (ranking.rank === 2) {
-      pointsAwarded = 50; // 2nd place
-    } else if (ranking.rank === 3) {
-      pointsAwarded = 25; // 3rd place
-    } else {
-      pointsAwarded = 10; // Participation
-    }
-
-    // Add bonus for final score
-    pointsAwarded += ranking.score;
-
-    try {
-      const response = await fetch("http://localhost:3000/api/users/score", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: team.userId,
-          scorePoints: pointsAwarded,
-        }),
-      });
-      if (!response.ok) {
-        console.error(`Failed to update score for ${team.teamId}:`, response.status);
-      }
-    } catch (error) {
-      console.error(`Error updating score for ${team.teamId}:`, error);
-    }
-  });
 }
 
+// Keep timer for UI updates only, not for turn advancement
 function startPhaseTimer(io, room) {
   if (room.timerId) {
     clearInterval(room.timerId);
   }
 
-  room.phaseEndsAt = Date.now() + TURN_DURATION_MS;
   room.timerId = setInterval(() => {
     if (room.status !== "active") {
       return;
     }
-
-    if (Date.now() >= room.phaseEndsAt) {
-      if (room.turnCount < TOTAL_TURNS) {
-        room.turnCount += 1;
-        room.glitchPhase = getCurrentGlitchPhase(room.turnCount);
-        room.phaseEndsAt = Date.now() + TURN_DURATION_MS;
-        io.to(room.roomId).emit("phaseChange", {
-          turnCount: room.turnCount,
-          glitchPhase: room.glitchPhase,
-          phaseEndsAt: room.phaseEndsAt,
-        });
-      } else {
-        endGame(io, room, "game-complete");
-        return;
-      }
-    }
-
+    // Just update room state for clients
     io.to(room.roomId).emit("roomUpdate", sanitizeRoom(room));
   }, 1000);
+}
+
+// Advance to next round after all teams attack
+async function advanceToNextRound(io, room) {
+  console.log(`[Round ${room.turnCount}] -> Advancing to Round ${room.turnCount + 1}`);
+  
+  if (room.turnCount >= TOTAL_TURNS) {
+    console.log(`[Round ${room.turnCount}] Game complete! Max turns reached.`);
+    endGame(io, room, "game-complete");
+    return;
+  }
+  
+  room.turnCount += 1;
+  resetRoundAttacks(room);
+  
+  // Get admin-controlled glitch phase
+  room.glitchPhase = await getAdminGlitchPhase();
+  
+  console.log(`[Round ${room.turnCount}] New round started. Glitch phase: ${room.glitchPhase}`);
+  
+  io.to(room.roomId).emit("phaseChange", {
+    turnCount: room.turnCount,
+    glitchPhase: room.glitchPhase,
+  });
+  
+  io.to(room.roomId).emit("roomUpdate", sanitizeRoom(room));
 }
 
 function ensureBotForRoom(room) {
@@ -293,12 +567,14 @@ function ensureBotForRoom(room) {
     botId = `${AI_PREFIX}${room.roomId}-${suffix}`;
   }
 
-  const fleetGrid = createRandomFleetGrid();
+  const fleetData = createRandomFleetGrid();
   const bot = {
     teamId: botId,
+    teamName: `🤖 Bot ${suffix}`,
     socketId: null,
     hp: REQUIRED_FLEET_CELLS,
-    fleetGrid,
+    fleetGrid: fleetData.grid,
+    ships: fleetData.ships,
     isAlive: true,
     score: 0,
     isConnected: true,
@@ -318,39 +594,42 @@ function canStartGame(room) {
   );
 }
 
-function startGame(io, room) {
-  ensureBotForRoom(room);
+async function startGame(io, room) {
   room.status = "active";
   room.turnCount = 1;
-  room.glitchPhase = getCurrentGlitchPhase(room.turnCount);
+  resetRoundAttacks(room);
+  room.aiEnemyAttackGrid = createGrid("unknown");
+  // Get admin-controlled glitch phase
+  room.glitchPhase = await getAdminGlitchPhase();
   room.turnIndex = getNextTurnIndex(room, 0);
-  room.phaseEndsAt = Date.now() + TURN_DURATION_MS;
   startPhaseTimer(io, room);
 
   io.to(room.roomId).emit("phaseChange", {
     turnCount: room.turnCount,
     glitchPhase: room.glitchPhase,
-    phaseEndsAt: room.phaseEndsAt,
   });
   io.to(room.roomId).emit("turnChange", {
     teamId: room.teams[room.turnIndex]?.teamId || null,
+    teamName: room.teams[room.turnIndex]?.teamName || null,
   });
   io.to(room.roomId).emit("roomUpdate", sanitizeRoom(room));
   queueAiTurn(io, room);
 }
 
-function maybeStartGame(io, room) {
+async function maybeStartGame(io, room) {
   if (!canStartGame(room)) {
     return;
   }
 
-  startGame(io, room);
+  await startGame(io, room);
 }
 
-function applyAttack(io, room, attacker, target, x, y, isDoubleOrNothing = false) {
+async function applyAttack(io, room, attacker, target, x, y, isDoubleOrNothing = false, userId = null) {
   if (!attacker.attackGrids[target.teamId]) {
     attacker.attackGrids[target.teamId] = createGrid("unknown");
   }
+
+  const previousScore = attacker.score;
 
   let actualX = x;
   let actualY = y;
@@ -375,6 +654,18 @@ function applyAttack(io, room, attacker, target, x, y, isDoubleOrNothing = false
     }
   }
 
+  if (target.teamId === AI_ENEMY_ID) {
+    if (!room.aiEnemyAttackGrid) {
+      room.aiEnemyAttackGrid = createGrid("unknown");
+    }
+    if (room.aiEnemyAttackGrid[actualY][actualX] !== "unknown") {
+      if (attacker.socketId) {
+        io.to(attacker.socketId).emit("errorMessage", { message: "AI cell already targeted." });
+      }
+      return;
+    }
+  }
+
   const result = resolveAttack(room, attacker, target, actualX, actualY);
 
   // Double or Nothing Glitch (turns 13-15): 2x multiplier
@@ -383,26 +674,70 @@ function applyAttack(io, room, attacker, target, x, y, isDoubleOrNothing = false
     damageMultiplier = 2;
   }
 
+  let shipSunk = false;
+  let sunkShipName = null;
+  let sinkBonus = 0;
+
+  // Apply damage to attacker (penalty for taking damage: -1 per HP lost)
   if (result.damageToAttacker > 0) {
-    attacker.hp = Math.max(attacker.hp - (result.damageToAttacker * damageMultiplier), 0);
+    const actualDamage = result.damageToAttacker * damageMultiplier;
+    attacker.hp = Math.max(attacker.hp - actualDamage, 0);
+    attacker.score = Math.max(attacker.score - actualDamage, 0); // -1 per damage taken
     if (attacker.hp === 0) {
       attacker.isAlive = false;
     }
   }
 
+  // Apply damage to target and track ship sinking
   if (result.damageToTarget > 0) {
-    target.hp = Math.max(target.hp - (result.damageToTarget * damageMultiplier), 0);
+    const actualDamage = result.damageToTarget * damageMultiplier;
+    target.hp = Math.max(target.hp - actualDamage, 0);
     if (target.hp === 0) {
       target.isAlive = false;
     }
-    attacker.score += result.damageToTarget * damageMultiplier;
+    
+    // Award +1 per hit
+    attacker.score += actualDamage;
+
+    // Track ship hits and detect sinking
+    if (result.hitShip && target.ships) {
+      result.hitShip.hits += actualDamage;
+      
+      if (result.hitShip.hits >= result.hitShip.size && !result.hitShip.sunk) {
+        result.hitShip.sunk = true;
+        shipSunk = true;
+        sunkShipName = result.hitShip.name;
+        sinkBonus = 5;
+        attacker.score += sinkBonus; // +5 bonus for sinking a ship
+      }
+    }
   }
 
   attacker.attackGrids[target.teamId][actualY][actualX] = result.isHit ? "hit" : "miss";
 
+  if (target.teamId === AI_ENEMY_ID) {
+    room.aiEnemyAttackGrid[actualY][actualX] = result.isHit ? "hit" : "miss";
+    io.to(room.roomId).emit("aiEnemyGridUpdate", {
+      grid: room.aiEnemyAttackGrid,
+    });
+  }
+
+  const scoreDelta = attacker.score - previousScore;
+  console.log(`[SCORE] Attack complete: userId=${attacker.lastUserId || attacker.userId}, previousScore=${previousScore}, newScore=${attacker.score}, delta=${scoreDelta}`);
+  
+  if (scoreDelta !== 0) {
+    void persistScoreDelta(attacker, scoreDelta);
+  }
+
+  const roomAttackGrid = target.teamId === AI_ENEMY_ID
+    ? room.aiEnemyAttackGrid
+    : undefined;
+
   io.to(room.roomId).emit("attackResult", {
     attackerId: attacker.teamId,
+    attackerName: attacker.teamName || attacker.teamId,
     targetTeamId: target.teamId,
+    targetName: target.teamName || target.teamId,
     x: actualX,
     y: actualY,
     originalX: x,
@@ -416,12 +751,23 @@ function applyAttack(io, room, attacker, target, x, y, isDoubleOrNothing = false
     damageToTarget: result.damageToTarget * damageMultiplier,
     attackerHp: attacker.hp,
     targetHp: target.hp,
+    shipSunk,
+    sunkShipName,
+    sinkBonus,
+    attackerScore: attacker.score,
+    ...(roomAttackGrid ? { attackGrid: roomAttackGrid } : {}),
   });
 
-  if (attacker.socketId) {
-    io.to(attacker.socketId).emit("attackResult", {
+  // Send attackResult to all members of attacking team
+  if (attacker.memberSockets && attacker.memberSockets.size > 0) {
+    const attackerGrid = target.teamId === AI_ENEMY_ID
+      ? room.aiEnemyAttackGrid
+      : attacker.attackGrids[target.teamId];
+    const attackResultPayload = {
       attackerId: attacker.teamId,
+      attackerName: attacker.teamName || attacker.teamId,
       targetTeamId: target.teamId,
+      targetName: target.teamName || target.teamId,
       x: actualX,
       y: actualY,
       originalX: x,
@@ -435,20 +781,85 @@ function applyAttack(io, room, attacker, target, x, y, isDoubleOrNothing = false
       damageToTarget: result.damageToTarget * damageMultiplier,
       attackerHp: attacker.hp,
       targetHp: target.hp,
-      attackGrid: attacker.attackGrids[target.teamId],
+      shipSunk,
+      sunkShipName,
+      sinkBonus,
+      attackerScore: attacker.score,
+      attackGrid: attackerGrid,
+    };
+    attacker.memberSockets.forEach((socketId) => {
+      io.to(socketId).emit("attackResult", attackResultPayload);
     });
   }
 
-  const aliveTeams = room.teams.filter((team) => team.isAlive && team.isConnected);
-  if (aliveTeams.length <= 1) {
-    endGame(io, room, "last-team-standing");
+  // Notify target team members if they were hit
+  if (result.isHit) {
+    const fleetHitPayload = {
+      x: actualX,
+      y: actualY,
+      attackerId: attacker.teamId,
+      attackerName: attacker.teamName || attacker.teamId,
+      damageDealt: result.damageToTarget * damageMultiplier,
+      hp: target.hp,
+      score: target.score,
+      shipSunk,
+      sunkShipName,
+    };
+    
+    if (target.teamId === AI_ENEMY_ID) {
+      // AI enemy is single target
+      if (target.socketId) {
+        io.to(target.socketId).emit("fleetHit", fleetHitPayload);
+      }
+    } else {
+      // Human team has multiple members
+      target.memberSockets?.forEach((socketId) => {
+        io.to(socketId).emit("fleetHit", fleetHitPayload);
+      });
+    }
+  }
+
+  // Mark that this member has attacked this round
+  if (userId) {
+    markMemberAttacked(room, attacker.teamId, userId);
+  }
+  
+  console.log(`[Round ${room.turnCount}] ${attacker.teamName || attacker.teamId} attacked. Members attacked.`);
+  
+  // Check if AI enemy is defeated
+  if (target.teamId === AI_ENEMY_ID && !target.isAlive) {
+    endGame(io, room, "ai-defeated");
     return;
   }
 
-  const nextIndex = getNextTurnIndex(room, room.turnIndex + 1);
-  room.turnIndex = nextIndex;
+  // Check if AI enemy is alive
+  if (!room.aiEnemy || !room.aiEnemy.isAlive) {
+    endGame(io, room, "ai-defeated");
+    return;
+  }
+
+  // Check if all members of current team have attacked
+  if (allMembersAttackedThisRound(room)) {
+    console.log(`[Round ${room.turnCount}] ${attacker.teamName || attacker.teamId} team done attacking.`);
+    
+    // Move to next team
+    const nextIndex = getNextTurnIndex(room, room.turnIndex + 1);
+    
+    // If no more alive teams this round, advance to next round
+    if (nextIndex === -1 || nextIndex <= room.turnIndex) {
+      console.log(`[Round ${room.turnCount}] All teams attacked. Advancing to next round...`);
+      await advanceToNextRound(io, room);
+      room.turnIndex = getNextTurnIndex(room, 0);
+    } else {
+      // Continue to next team this round
+      room.turnIndex = nextIndex;
+    }
+  }
+
+  // Broadcast room update with new turn index
   io.to(room.roomId).emit("turnChange", {
     teamId: room.teams[room.turnIndex]?.teamId || null,
+    teamName: room.teams[room.turnIndex]?.teamName || null,
   });
   io.to(room.roomId).emit("roomUpdate", sanitizeRoom(room));
   queueAiTurn(io, room);
@@ -468,7 +879,7 @@ function queueAiTurn(io, room) {
     clearTimeout(room.aiTimerId);
   }
 
-  room.aiTimerId = setTimeout(() => {
+  room.aiTimerId = setTimeout(async () => {
     if (room.status !== "active") {
       return;
     }
@@ -476,7 +887,8 @@ function queueAiTurn(io, room) {
       return;
     }
 
-    const target = room.teams.find((team) => !isBot(team) && team.isAlive && team.isConnected) ||
+    const hasConnectedHumanMembers = (team) => !isBot(team) && team.memberSockets && team.memberSockets.size > 0;
+    const target = room.teams.find((team) => !isBot(team) && team.isAlive && hasConnectedHumanMembers(team)) ||
       room.teams.find((team) => !isBot(team) && team.isAlive);
     if (!target) {
       return;
@@ -501,7 +913,7 @@ function queueAiTurn(io, room) {
     }
 
     const pick = options[Math.floor(Math.random() * options.length)];
-    applyAttack(io, room, currentTeam, target, pick.x, pick.y);
+    await applyAttack(io, room, currentTeam, target, pick.x, pick.y);
   }, AI_THINK_MS);
 }
 
@@ -545,8 +957,9 @@ nextApp.prepare().then(() => {
     },
   });
 
-  // Only use express.json() for admin routes
-  app.use("/api/admin", express.json());
+  // Apply express.json() only to specific Express-handled admin routes
+  // to avoid interfering with Next.js API routes
+  const adminJsonParser = express.json();
 
   app.get("/api/admin/rooms", (req, res) => {
     if (!requireAdmin(req, res)) {
@@ -555,7 +968,7 @@ nextApp.prepare().then(() => {
     res.json({ rooms: listRoomsSummary() });
   });
 
-  app.post("/api/admin/rooms", (req, res) => {
+  app.post("/api/admin/rooms", adminJsonParser, (req, res) => {
     if (!requireAdmin(req, res)) {
       return;
     }
@@ -576,13 +989,15 @@ nextApp.prepare().then(() => {
         turnIndex: 0,
         phaseEndsAt: null,
         timerId: null,
+        aiEnemy: createAIEnemy(),
+        aiEnemyAttackGrid: createGrid("unknown"),
       });
     }
 
     res.json({ ok: true, room: rooms.get(roomId) });
   });
 
-  app.post("/api/admin/rooms/:roomId/start", (req, res) => {
+  app.post("/api/admin/rooms/:roomId/start", adminJsonParser, (req, res) => {
     if (!requireAdmin(req, res)) {
       return;
     }
@@ -602,7 +1017,7 @@ nextApp.prepare().then(() => {
     res.json({ ok: true });
   });
 
-  app.post("/api/admin/rooms/:roomId/stop", (req, res) => {
+  app.post("/api/admin/rooms/:roomId/stop", adminJsonParser, (req, res) => {
     if (!requireAdmin(req, res)) {
       return;
     }
@@ -617,11 +1032,50 @@ nextApp.prepare().then(() => {
     res.json({ ok: true });
   });
 
+  app.get("/api/battleship/leaderboard", (req, res) => {
+    // Aggregate scores across all rooms
+    const teamScores = new Map();
+    
+    rooms.forEach((room) => {
+      room.teams.forEach((team) => {
+        if (!team.isBot) { // Exclude AI bots
+          const existingScore = teamScores.get(team.teamId) || { teamId: team.teamId, score: 0, hp: 0, isAlive: false };
+          teamScores.set(team.teamId, {
+            teamId: team.teamId,
+            score: Math.max(existingScore.score, team.score), // Use highest score across rooms
+            hp: team.hp,
+            isAlive: team.isAlive,
+            roomId: room.roomId,
+          });
+        }
+      });
+    });
+
+    const leaderboard = Array.from(teamScores.values())
+      .sort((a, b) => b.score - a.score); // Sort by score descending
+
+    res.json({ leaderboard });
+  });
+
   io.on("connection", (socket) => {
-    socket.on("joinRoom", ({ roomId, teamId, userId }) => {
+    socket.on("joinRoom", async ({ roomId, teamId, userId }) => {
       if (!roomId || !teamId) {
         socket.emit("errorMessage", { message: "Missing roomId or teamId." });
         return;
+      }
+
+      // Fetch team name from database
+      let teamName = teamId;
+      try {
+        const db = await getDb();
+        const teamDoc = await db.collection("teams").findOne({ _id: new ObjectId(teamId) });
+        console.log(`[DEBUG] Team lookup for ${teamId}:`, teamDoc);
+        if (teamDoc) {
+          teamName = teamDoc.name || teamId;
+          console.log(`[DEBUG] Team name set to: ${teamName}`);
+        }
+      } catch (error) {
+        console.error("Failed to fetch team name:", error);
       }
 
       let room = rooms.get(roomId);
@@ -635,14 +1089,32 @@ nextApp.prepare().then(() => {
           turnIndex: 0,
           phaseEndsAt: null,
           timerId: null,
+          aiEnemy: createAIEnemy(),
+          aiEnemyAttackGrid: createGrid("unknown"),
         };
         rooms.set(roomId, room);
       }
 
+      if (!room.aiEnemyAttackGrid) {
+        room.aiEnemyAttackGrid = createGrid("unknown");
+      }
+
       let team = room.teams.find((entry) => entry.teamId === teamId);
       if (team) {
-        team.socketId = socket.id;
-        team.isConnected = true;
+        // Member joining existing team
+        if (userId) {
+          if (!team.memberSockets) {
+            team.memberSockets = new Map();
+          }
+          if (!team.members) {
+            team.members = [];
+          }
+          if (!team.members.includes(userId)) {
+            team.members.push(userId);
+          }
+          team.memberSockets.set(userId, socket.id);
+        }
+        team.teamName = teamName; // Update name in case it changed
       } else {
         if (room.teams.length >= MAX_TEAMS) {
           socket.emit("errorMessage", { message: "Room is full." });
@@ -651,13 +1123,14 @@ nextApp.prepare().then(() => {
 
         team = {
           teamId,
-          userId: userId || null,
-          socketId: socket.id,
+          teamName,
+          members: userId ? [userId] : [],
+          memberSockets: new Map(userId ? [[userId, socket.id]] : []),
           hp: 0,
           fleetGrid: null,
+          ships: [],
           isAlive: true,
           score: 0,
-          isConnected: true,
           attackGrids: {},
         };
         room.teams.push(team);
@@ -665,15 +1138,17 @@ nextApp.prepare().then(() => {
 
       socket.join(roomId);
       io.to(roomId).emit("roomUpdate", sanitizeRoom(room));
+      socket.emit("aiEnemyGridUpdate", { grid: room.aiEnemyAttackGrid });
 
       if (room.status === "active") {
         socket.emit("turnChange", {
           teamId: room.teams[room.turnIndex]?.teamId || null,
+          teamName: room.teams[room.turnIndex]?.teamName || null,
         });
       }
     });
 
-    socket.on("placeFleet", ({ roomId, teamId, fleetGrid }) => {
+    socket.on("placeFleet", async ({ roomId, teamId, fleetGrid }) => {
       const room = rooms.get(roomId);
       if (!room) {
         socket.emit("errorMessage", { message: "Room not found." });
@@ -711,15 +1186,32 @@ nextApp.prepare().then(() => {
         return;
       }
 
+      // Detect ships from grid
+      const ships = detectShipsFromGrid(fleetGrid);
+      
+      // Validate ship configuration
+      const sizes = ships.map(s => s.size).sort((a, b) => b - a);
+      const expectedSizes = [...SHIP_SIZES].sort((a, b) => b - a);
+      const sizesMatch = sizes.length === expectedSizes.length && 
+                         sizes.every((size, i) => size === expectedSizes[i]);
+      
+      if (!sizesMatch) {
+        socket.emit("errorMessage", {
+          message: `Fleet must contain ships of sizes: ${SHIP_SIZES.join(', ')}. Found: ${sizes.join(', ')}`,
+        });
+        return;
+      }
+
       team.fleetGrid = fleetGrid;
+      team.ships = ships;
       team.hp = cellCount;
       team.isAlive = cellCount > 0;
 
       io.to(roomId).emit("roomUpdate", sanitizeRoom(room));
-      maybeStartGame(io, room);
+      await maybeStartGame(io, room);
     });
 
-    socket.on("attack", ({ roomId, attackerId, targetTeamId, x, y, isDoubleOrNothing }) => {
+    socket.on("attack", async ({ roomId, attackerId, targetTeamId, x, y, isDoubleOrNothing, userId }) => {
       const room = rooms.get(roomId);
       if (!room || room.status !== "active") {
         socket.emit("errorMessage", { message: "Game not active." });
@@ -727,13 +1219,25 @@ nextApp.prepare().then(() => {
       }
 
       const attacker = room.teams.find((team) => team.teamId === attackerId);
-      const target = room.teams.find((team) => team.teamId === targetTeamId);
+      
+      // Target can be either a team or the AI enemy
+      let target;
+      if (targetTeamId === AI_ENEMY_ID) {
+        target = room.aiEnemy;
+      } else {
+        target = room.teams.find((team) => team.teamId === targetTeamId);
+      }
+      
       if (!attacker || !target) {
         socket.emit("errorMessage", { message: "Invalid teams." });
         return;
       }
 
-      if (!attacker.isAlive || !attacker.isConnected) {
+      if (userId) {
+        attacker.lastUserId = userId;
+      }
+
+      if (!attacker.isAlive || !attacker.memberSockets || attacker.memberSockets.size === 0) {
         socket.emit("errorMessage", { message: "Attacker inactive." });
         return;
       }
@@ -749,6 +1253,12 @@ nextApp.prepare().then(() => {
         return;
       }
 
+      // Check if this member has already attacked this round
+      if (userId && hasMemberAttackedThisRound(room, attackerId, userId)) {
+        socket.emit("errorMessage", { message: "You have already attacked this round." });
+        return;
+      }
+
       if (
         typeof x !== "number" ||
         typeof y !== "number" ||
@@ -761,6 +1271,16 @@ nextApp.prepare().then(() => {
         return;
       }
 
+      if (targetTeamId === AI_ENEMY_ID) {
+        if (!room.aiEnemyAttackGrid) {
+          room.aiEnemyAttackGrid = createGrid("unknown");
+        }
+        if (room.aiEnemyAttackGrid[y][x] !== "unknown") {
+          socket.emit("errorMessage", { message: "AI cell already targeted." });
+          return;
+        }
+      }
+
       if (!attacker.attackGrids[targetTeamId]) {
         attacker.attackGrids[targetTeamId] = createGrid("unknown");
       }
@@ -770,24 +1290,24 @@ nextApp.prepare().then(() => {
         return;
       }
 
-      applyAttack(io, room, attacker, target, x, y, Boolean(isDoubleOrNothing));
+      await applyAttack(io, room, attacker, target, x, y, Boolean(isDoubleOrNothing), userId);
     });
 
     socket.on("disconnect", () => {
       rooms.forEach((room) => {
-        const team = room.teams.find((entry) => entry.socketId === socket.id);
-        if (team) {
-          team.isConnected = false;
-          io.to(room.roomId).emit("roomUpdate", sanitizeRoom(room));
-          const currentTurnTeamId = room.teams[room.turnIndex]?.teamId;
-          if (currentTurnTeamId === team.teamId && room.status === "active") {
-            room.turnIndex = getNextTurnIndex(room, room.turnIndex + 1);
-            io.to(room.roomId).emit("turnChange", {
-              teamId: room.teams[room.turnIndex]?.teamId || null,
-            });
-            queueAiTurn(io, room);
+        room.teams.forEach((team) => {
+          // Find and remove member socket
+          let disconnectedUserId = null;
+          team.memberSockets?.forEach((sockId, userId) => {
+            if (sockId === socket.id) {
+              disconnectedUserId = userId;
+            }
+          });
+          if (disconnectedUserId) {
+            team.memberSockets.delete(disconnectedUserId);
+            io.to(room.roomId).emit("roomUpdate", sanitizeRoom(room));
           }
-        }
+        });
       });
     });
   });

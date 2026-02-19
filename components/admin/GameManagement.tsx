@@ -37,7 +37,7 @@ const AVAILABLE_GAMES = [
   {
     id: "wordle",
     name: "Wordle",
-    description: "Guess the word in 6 attempts",
+    description: "Guess the word ",
     path: "/wordle",
   },
 ];
@@ -50,11 +50,60 @@ export default function GameManagement() {
   const [roomsLoading, setRoomsLoading] = useState(false);
   const [roomsError, setRoomsError] = useState("");
   const [newRoomId, setNewRoomId] = useState("");
+  const [currentPhase, setCurrentPhase] = useState<"battleship" | "wordle">("battleship");
+  const [phaseLoading, setPhaseLoading] = useState(false);
+  const [currentGlitchPhase, setCurrentGlitchPhase] = useState<number>(1);
+  const [glitchPhaseLoading, setGlitchPhaseLoading] = useState(false);
+
+  const GLITCH_PHASES = [
+    { phase: 1, name: "Normal", desc: "Normal: Hit damages target" },
+    { phase: 2, name: "Reflective Armor", desc: "Hit damages attacker" },
+    { phase: 3, name: "Dual Damage", desc: "Hit damages both" },
+    { phase: 4, name: "Shot Shift", desc: "Randomly shift coordinates" },
+    { phase: 5, name: "Double or Nothing", desc: "2x score multiplier" },
+  ];
 
   useEffect(() => {
     fetchGames();
     fetchRooms();
+    fetchCurrentPhase();
+    fetchCurrentGlitchPhase();
   }, []);
+
+  const fetchCurrentGlitchPhase = async () => {
+    try {
+      const response = await fetch("/api/admin/glitch");
+      if (response.ok) {
+        const data = await response.json();
+        setCurrentGlitchPhase(data.phase || 1);
+      }
+    } catch (error) {
+      console.error("Error fetching glitch phase:", error);
+    }
+  };
+
+  const updateGlitchPhase = async (glitchPhase: number) => {
+    try {
+      setGlitchPhaseLoading(true);
+      const response = await fetch("/api/admin/glitch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phase: glitchPhase }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCurrentGlitchPhase(data.phase);
+        setError("");
+      } else {
+        setError("Failed to update glitch phase");
+      }
+    } catch (error) {
+      console.error("Error updating glitch phase:", error);
+      setError("Failed to update glitch phase");
+    } finally {
+      setGlitchPhaseLoading(false);
+    }
+  };
 
   const fetchGames = async () => {
     try {
@@ -65,7 +114,6 @@ export default function GameManagement() {
         setGames(data);
         setError("");
       } else {
-        // Initialize with default games if API fails
         setGames(
           AVAILABLE_GAMES.map((game) => ({
             ...game,
@@ -76,7 +124,6 @@ export default function GameManagement() {
       }
     } catch (error) {
       console.error("Error fetching games:", error);
-      // Fallback to default games
       setGames(
         AVAILABLE_GAMES.map((game) => ({
           ...game,
@@ -86,6 +133,40 @@ export default function GameManagement() {
       );
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchCurrentPhase = async () => {
+    try {
+      const response = await fetch("/api/admin/phase");
+      if (response.ok) {
+        const data = await response.json();
+        setCurrentPhase(data.phase || "battleship");
+      }
+    } catch (error) {
+      console.error("Error fetching phase:", error);
+    }
+  };
+
+  const updatePhase = async (phase: "battleship" | "wordle") => {
+    try {
+      setPhaseLoading(true);
+      const response = await fetch("/api/admin/phase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phase }),
+      });
+      if (response.ok) {
+        setCurrentPhase(phase);
+        setError("");
+      } else {
+        setError("Failed to update game phase");
+      }
+    } catch (error) {
+      console.error("Error updating phase:", error);
+      setError("Failed to update game phase");
+    } finally {
+      setPhaseLoading(false);
     }
   };
 
@@ -215,6 +296,122 @@ export default function GameManagement() {
         </div>
       )}
 
+      {/* Game Phase Control */}
+      <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 border-2 border-purple-500/50 rounded-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-2xl font-bold flex items-center gap-2">
+              🎮 Game Phase Control
+            </h2>
+            <p className="text-white/60 text-sm mt-1">
+              Control which game is currently active for all players
+            </p>
+          </div>
+          <div className="px-4 py-2 bg-black/40 border border-white/30 rounded-lg">
+            <div className="text-xs text-white/60 uppercase tracking-wider">Current Phase</div>
+            <div className="text-lg font-bold text-white capitalize">{currentPhase}</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <button
+            onClick={() => updatePhase("battleship")}
+            disabled={phaseLoading || currentPhase === "battleship"}
+            className={`p-6 rounded-lg border-2 transition-all ${
+              currentPhase === "battleship"
+                ? "bg-blue-500/30 border-blue-400 shadow-lg shadow-blue-500/50"
+                : "bg-white/5 border-white/20 hover:bg-white/10 hover:border-blue-400/50"
+            } ${phaseLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+          >
+            <div className="text-4xl mb-2">⚓</div>
+            <div className="text-xl font-bold mb-1">Battleship Phase</div>
+            <div className="text-sm text-white/70">Teams compete in tactical naval combat</div>
+            {currentPhase === "battleship" && (
+              <div className="mt-3 px-3 py-1 bg-blue-500/50 rounded text-xs font-semibold uppercase">
+                ✓ Active Now
+              </div>
+            )}
+          </button>
+
+          <button
+            onClick={() => updatePhase("wordle")}
+            disabled={phaseLoading || currentPhase === "wordle"}
+            className={`p-6 rounded-lg border-2 transition-all ${
+              currentPhase === "wordle"
+                ? "bg-yellow-500/30 border-yellow-400 shadow-lg shadow-yellow-500/50"
+                : "bg-white/5 border-white/20 hover:bg-white/10 hover:border-yellow-400/50"
+            } ${phaseLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+          >
+            <div className="text-4xl mb-2">📝</div>
+            <div className="text-xl font-bold mb-1">Wordle Phase (FINAL)</div>
+            <div className="text-sm text-white/70">Final word battle for the championship</div>
+            {currentPhase === "wordle" && (
+              <div className="mt-3 px-3 py-1 bg-yellow-500/50 rounded text-xs font-semibold uppercase">
+                ✓ Active Now
+              </div>
+            )}
+          </button>
+        </div>
+
+        <div className="mt-4 p-4 bg-white/5 border border-white/10 rounded-lg text-sm text-white/80">
+          <div className="flex items-start gap-2">
+            <span className="text-yellow-400">⚠️</span>
+            <div>
+              <strong>Note:</strong> Changing the phase will update which game players see as active. 
+              Wordle is designated as the final championship phase.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-gradient-to-r from-indigo-500/20 to-violet-500/20 border-2 border-indigo-500/50 rounded-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-2xl font-bold flex items-center gap-2">
+              ⚡ Glitch Phase Control
+            </h2>
+            <p className="text-white/60 text-sm mt-1">
+              Control which glitch mechanic is active during battleship turns
+            </p>
+          </div>
+          <div className="px-4 py-2 bg-black/40 border border-white/30 rounded-lg">
+            <div className="text-xs text-white/60 uppercase tracking-wider">Current Glitch</div>
+            <div className="text-lg font-bold text-indigo-300">Phase {currentGlitchPhase}</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+          {GLITCH_PHASES.map((glitch) => (
+            <button
+              key={glitch.phase}
+              onClick={() => updateGlitchPhase(glitch.phase)}
+              disabled={glitchPhaseLoading || currentGlitchPhase === glitch.phase}
+              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                currentGlitchPhase === glitch.phase
+                  ? "bg-indigo-500/30 border-indigo-400 shadow-lg shadow-indigo-500/50"
+                  : "bg-white/5 border-white/20 hover:bg-white/10 hover:border-indigo-400/50"
+              } ${glitchPhaseLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+            >
+              <div className="text-2xl mb-2">#{glitch.phase}</div>
+              <div className="font-bold text-sm mb-1 text-white">{glitch.name}</div>
+              <div className="text-xs text-white/70">{glitch.desc}</div>
+              {currentGlitchPhase === glitch.phase && (
+                <div className="mt-2 px-2 py-1 bg-indigo-500/50 rounded text-xs font-semibold uppercase">
+                  ✓ Active
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-4 p-4 bg-white/5 border border-white/10 rounded-lg text-sm text-white/80">
+          <div className="flex items-start gap-2">
+            <span className="text-indigo-400">ℹ️</span>
+            <div>
+              <strong>How Glitches Work:</strong> Admins can control which glitch is active. This affects damage calculations and mechanics for all active games until changed.
+            </div>
+          </div>
+        </div>      </div>
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold">Game Management</h2>
@@ -263,51 +460,15 @@ export default function GameManagement() {
                   {game.path}
                 </code>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-white/70">Players Active:</span>
-                <span className="text-white font-semibold">{game.usersPlaying}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-white/70">Status:</span>
-                <span className="text-white">
-                  {game.isActive ? "Available" : "Under Maintenance"}
-                </span>
-              </div>
+            
             </div>
 
-            <div className="flex gap-2">
-              <button
-                onClick={() => toggleGameStatus(game.id, game.isActive)}
-                className={`flex-1 px-4 py-2 rounded border transition-colors text-sm font-semibold ${
-                  game.isActive
-                    ? "bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 border-yellow-500/50"
-                    : "bg-green-500/20 text-green-400 hover:bg-green-500/30 border-green-500/50"
-                }`}
-              >
-                {game.isActive ? "Take Offline" : "Go Online"}
-              </button>
-              <a
-                href={game.path}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-1 px-4 py-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/50 rounded transition-colors text-sm font-semibold text-center"
-              >
-                Test Game
-              </a>
-            </div>
+          
           </div>
         ))}
       </div>
 
-      <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-6">
-        <h3 className="text-lg font-bold mb-3 text-blue-300">ℹ️ Game Management Info</h3>
-        <ul className="space-y-2 text-sm text-white/80">
-          <li>• <strong>Active:</strong> Users can access and play the game</li>
-          <li>• <strong>Inactive:</strong> Game is under maintenance or disabled</li>
-          <li>• <strong>Players Active:</strong> Current number of users playing the game</li>
-          <li>• <strong>Test Game:</strong> Opens the game in a new window to test functionality</li>
-        </ul>
-      </div>
+     
 
       <div className="bg-white/5 border border-white/20 rounded-lg p-6 space-y-4">
         <div className="flex items-center justify-between">
@@ -341,8 +502,7 @@ export default function GameManagement() {
         {roomsError && (
           <div className="bg-red-500/20 border border-red-500 text-red-200 px-4 py-3 rounded-lg">
             {roomsError}
-          </div>
-        )}
+          </div>)}
 
         {roomsLoading ? (
           <div className="text-white/70">Loading rooms...</div>

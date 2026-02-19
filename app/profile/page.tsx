@@ -129,8 +129,8 @@ export default function ProfilePage() {
             {/* Account Info */}
             <div className="bg-black/30 border-2 border-verse-light/20 p-4 mb-6 space-y-2 text-xs">
               <div className="flex justify-between">
-                <span className="text-verse-light/70">Account ID:</span>
-                <span className="text-verse-accent font-pixel">{user.sub.slice(0, 12)}...</span>
+                <span className="text-verse-light/70">Username:</span>
+                <span className="text-verse-accent font-pixel">{user.username}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-verse-light/70">Email:</span>

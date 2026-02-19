@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 type TeamMember = {
   id: string;
   username: string;
   role: "leader" | "member";
+  score: number;
 };
 
 type TeamPayload = {
@@ -28,6 +30,7 @@ type StatusResponse = {
 };
 
 export default function TeamRegisterPage() {
+  const router = useRouter();
   const [status, setStatus] = useState<"loading" | "ready" | "unauth">("loading");
   const [team, setTeam] = useState<TeamPayload | null>(null);
   const [viewer, setViewer] = useState<ViewerPayload | null>(null);
@@ -60,6 +63,12 @@ export default function TeamRegisterPage() {
   useEffect(() => {
     refreshStatus();
   }, []);
+
+  useEffect(() => {
+    if (status === "unauth") {
+      router.push("/login");
+    }
+  }, [status, router]);
 
   const handleCreate = async () => {
     setError("");
@@ -262,6 +271,7 @@ export default function TeamRegisterPage() {
                     <div>
                       <p className="font-pixel text-sm text-white">{member.username}</p>
                       <p className="text-[10px] uppercase tracking-[0.3em] text-purple-300">{member.role}</p>
+                      <p className="text-[10px] uppercase tracking-[0.3em] text-purple-200">Score {member.score}</p>
                     </div>
                     {isLeader && member.role !== "leader" ? (
                       <button className="text-xs uppercase tracking-widest text-pink-300 hover:text-white" onClick={() => handleKick(member.id)}>

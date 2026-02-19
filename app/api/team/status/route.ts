@@ -7,6 +7,7 @@ type TeamMember = {
   id: string;
   username: string;
   role: "leader" | "member";
+  score: number;
 };
 
 type TeamPayload = {
@@ -64,21 +65,24 @@ export async function GET(request: NextRequest) {
 
   const members = await users
     .find({ _id: { $in: normalizedMemberIds } })
-    .project({ username: 1 })
+    .project({ username: 1, score: 1 })
     .toArray();
 
-  const memberMap = new Map(members.map((member) => [member._id.toString(), member.username]));
+  const memberMap = new Map(
+    members.map((member) => [member._id.toString(), { username: member.username, score: member.score || 0 }])
+  );
   const memberPayload: TeamMember[] = normalizedMemberIds
     .map((memberId) => {
-      const username = memberMap.get(memberId.toString());
-      if (!username) {
+      const member = memberMap.get(memberId.toString());
+      if (!member) {
         return null;
       }
 
       return {
         id: memberId.toString(),
-        username,
+        username: member.username,
         role: memberId.equals(leaderId) ? "leader" : "member",
+        score: member.score,
       } satisfies TeamMember;
     })
     .filter((member): member is TeamMember => Boolean(member));
@@ -97,5 +101,6 @@ export async function GET(request: NextRequest) {
       id: userId.toString(),
       role: leaderId.equals(userId) ? "leader" : "member",
     },
+    teamScore: team.score || 0,
   });
 }

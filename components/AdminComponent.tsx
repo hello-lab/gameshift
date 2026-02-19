@@ -5,8 +5,9 @@ import UserManagement from "./admin/UserManagement";
 import TeamManagement from "./admin/TeamManagement";
 import GameManagement from "./admin/GameManagement";
 import AdminStats from "./admin/AdminStats";
+import WordleAdmin from "./admin/WordleAdmin";
 
-type Tab = "stats" | "users" | "teams" | "games";
+type Tab = "stats" | "users" | "teams" | "games" ;
 
 export default function AdminComponent() {
   const [activeTab, setActiveTab] = useState<Tab>("stats");
@@ -82,6 +83,7 @@ export default function AdminComponent() {
         {activeTab === "users" && <UserManagement />}
         {activeTab === "teams" && <TeamManagement />}
         {activeTab === "games" && <GameManagement />}
+        {activeTab === "wordle" && <WordleAdmin />}
       </main>
     </div>
   );
